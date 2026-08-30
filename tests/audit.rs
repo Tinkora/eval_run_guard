@@ -68,6 +68,31 @@ fn drains_oversized_record_and_continues_with_next_record() {
 }
 
 #[test]
+fn compares_terminal_categories_after_non_terminal_updates() {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("states.jsonl");
+    fs::write(&input, "{\"sample\":{\"id\":\"a\"},\"result\":{\"status\":\"running\"}}\n{\"sample\":{\"id\":\"a\"},\"result\":{\"status\":\"completed\"}}\n{\"sample\":{\"id\":\"a\"},\"result\":{\"status\":\"succeeded\"}}\n{\"sample\":{\"id\":\"a\"},\"result\":{\"status\":\"failed\"}}\n").unwrap();
+
+    let report = audit(&input, &mapping(), None).unwrap();
+    assert_eq!(
+        report
+            .findings
+            .iter()
+            .filter(|f| f.code == "ERG003")
+            .count(),
+        3
+    );
+    assert_eq!(
+        report
+            .findings
+            .iter()
+            .filter(|f| f.code == "ERG004")
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn json_and_sarif_share_finding_count_without_content() {
     let dir = tempdir().unwrap();
     let input = dir.path().join("run\nprivate.jsonl");

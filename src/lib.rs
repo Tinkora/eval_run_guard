@@ -179,7 +179,7 @@ fn inspect_record(
             "failed" | "errored" => report.counts.errored = report.counts.errored.saturating_add(1),
             _ => {}
         }
-        if let Some(previous) = states.get(id) {
+        if let Some(previous) = states.get_mut(id) {
             finding(
                 report,
                 "ERG003",
@@ -187,15 +187,20 @@ fn inspect_record(
                 Some(line),
                 "Sample identifier is duplicated",
             );
-            if is_terminal(previous) && is_terminal(&normalized) && previous != &normalized {
-                finding(
-                    report,
-                    "ERG004",
-                    Severity::Error,
-                    Some(line),
-                    "A sample has conflicting terminal statuses",
-                );
+            if let (Some(previous_category), Some(current_category)) =
+                (terminal_category(previous), terminal_category(&normalized))
+            {
+                if previous_category != current_category {
+                    finding(
+                        report,
+                        "ERG004",
+                        Severity::Error,
+                        Some(line),
+                        "A sample has conflicting terminal statuses",
+                    );
+                }
             }
+            *previous = normalized;
         } else if states.len() < MAX_TRACKED_SAMPLES {
             states.insert(id.to_owned(), normalized);
         } else if !report.findings.iter().any(|item| item.code == "ERG007") {
@@ -361,11 +366,13 @@ fn safe_basename(path: &Path) -> String {
         .collect()
 }
 
-fn is_terminal(status: &str) -> bool {
-    matches!(
-        status,
-        "completed" | "succeeded" | "failed" | "errored" | "cancelled"
-    )
+fn terminal_category(status: &str) -> Option<u8> {
+    match status {
+        "completed" | "succeeded" => Some(0),
+        "failed" | "errored" => Some(1),
+        "cancelled" => Some(2),
+        _ => None,
+    }
 }
 
 fn finding(
