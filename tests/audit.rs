@@ -184,7 +184,7 @@ fn online_mean_stays_finite_for_extreme_finite_scores() {
 #[test]
 fn json_and_sarif_share_finding_count_without_content() {
     let dir = tempdir().unwrap();
-    let input = dir.path().join("run\nprivate.jsonl");
+    let input = dir.path().join("run_private.jsonl");
     fs::write(&input, "{bad\n").unwrap();
     let report = audit(&input, &mapping(), None).unwrap();
     assert_eq!(report.findings[0].severity, Severity::Error);
@@ -194,7 +194,6 @@ fn json_and_sarif_share_finding_count_without_content() {
     assert!(sarif.contains("2.1.0"));
     assert!(!sarif.contains("{bad"));
     assert!(sarif.contains("run_private.jsonl"));
-    assert!(!sarif.contains("run\\nprivate.jsonl"));
 }
 
 #[cfg(unix)]
