@@ -93,6 +93,95 @@ fn compares_terminal_categories_after_non_terminal_updates() {
 }
 
 #[test]
+fn non_terminal_update_does_not_erase_terminal_outcome() {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("states.jsonl");
+    fs::write(&input, "{\"sample\":{\"id\":\"a\"},\"result\":{\"status\":\"completed\"}}\n{\"sample\":{\"id\":\"a\"},\"result\":{\"status\":\"running\"}}\n{\"sample\":{\"id\":\"a\"},\"result\":{\"status\":\"failed\"}}\n").unwrap();
+
+    let report = audit(&input, &mapping(), None).unwrap();
+    assert_eq!(
+        report
+            .findings
+            .iter()
+            .filter(|f| f.code == "ERG004")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn caps_findings_and_emits_one_saturation_notice() {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("many-bad-lines.jsonl");
+    fs::write(&input, "{bad\n".repeat(10_100)).unwrap();
+
+    let report = audit(&input, &mapping(), None).unwrap();
+    assert!(report.findings.len() <= 10_000);
+    assert_eq!(
+        report
+            .findings
+            .iter()
+            .filter(|f| f.code == "ERG007")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn rejects_oversized_status_without_echoing_it() {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("status.jsonl");
+    let secret = "S".repeat(129);
+    fs::write(
+        &input,
+        format!("{{\"sample\":{{\"id\":\"a\"}},\"result\":{{\"status\":\"{secret}\"}}}}\n"),
+    )
+    .unwrap();
+
+    let report = audit(&input, &mapping(), None).unwrap();
+    assert!(report.findings.iter().any(|f| f.code == "ERG002"));
+    assert!(!render(&report, OutputFormat::Json)
+        .unwrap()
+        .contains(&secret));
+}
+
+#[test]
+fn caps_duplicate_tracking_by_estimated_bytes() {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("many-identities.jsonl");
+    let suffix = "x".repeat(980);
+    let mut records = String::new();
+    for index in 0..17_000 {
+        records.push_str(&format!("{{\"sample\":{{\"id\":\"{index:05}{suffix}\"}},\"result\":{{\"status\":\"running\"}}}}\n"));
+    }
+    fs::write(&input, records).unwrap();
+
+    let report = audit(&input, &mapping(), None).unwrap();
+    assert_eq!(
+        report
+            .findings
+            .iter()
+            .filter(|f| f.code == "ERG007")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn online_mean_stays_finite_for_extreme_finite_scores() {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("scores.jsonl");
+    let mut unrestricted = mapping();
+    unrestricted.score_min = None;
+    unrestricted.score_max = None;
+    fs::write(&input, "{\"sample\":{\"id\":\"a\"},\"result\":{\"status\":\"completed\",\"score\":1.7e308}}\n{\"sample\":{\"id\":\"b\"},\"result\":{\"status\":\"completed\",\"score\":1.7e308}}\n").unwrap();
+
+    let report = audit(&input, &unrestricted, None).unwrap();
+    assert!(report.mean.unwrap().is_finite());
+    assert!(!report.findings.iter().any(|f| f.code == "ERG005"));
+}
+
+#[test]
 fn json_and_sarif_share_finding_count_without_content() {
     let dir = tempdir().unwrap();
     let input = dir.path().join("run\nprivate.jsonl");

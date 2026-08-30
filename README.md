@@ -47,8 +47,8 @@ Exit code `0` means no findings, `1` means findings were reported, and `2` means
 
 ## Guarantees and limits
 
-- Reads explicit local regular files only and rejects symlink inputs.
-- Streams JSONL with a 16 MiB record limit and caps duplicate tracking at 250,000 samples.
+- Reads explicit, stable local regular files only. Symlink rejection is best-effort validation, not a hostile concurrent-filesystem security boundary.
+- Streams JSONL with explicit limits for records, fields, tracking memory, and findings.
 - Reports fixed explanations, sanitized basenames, and line numbers—not sample IDs, values, content, or absolute paths.
 - Recomputes only declared counts and an arithmetic mean.
 - Does not infer schemas, run evaluations, repair files, or access the network.

@@ -8,8 +8,11 @@ use std::path::Path;
 
 const MAX_RECORD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_AUXILIARY_BYTES: u64 = 1024 * 1024;
-const MAX_TRACKED_SAMPLES: usize = 250_000;
-const MAX_IDENTIFIER_BYTES: usize = 4096;
+const MAX_TRACKING_BYTES: usize = 16 * 1024 * 1024;
+const MAX_IDENTIFIER_BYTES: usize = 1024;
+const MAX_STATUS_BYTES: usize = 128;
+const TRACKING_ENTRY_OVERHEAD: usize = 64;
+const MAX_FINDINGS: usize = 10_000;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -94,8 +97,8 @@ pub fn audit(input: &Path, mapping: &Mapping, summary: Option<&Path>) -> Result<
         findings: Vec::new(),
     };
     let mut line = 0_u64;
-    let mut states: HashMap<String, String> = HashMap::new();
-    let mut score_sum = 0.0;
+    let mut states: HashMap<String, Option<u8>> = HashMap::new();
+    let mut tracking_bytes = 0_usize;
 
     loop {
         line = line.saturating_add(1);
@@ -135,11 +138,8 @@ pub fn audit(input: &Path, mapping: &Mapping, summary: Option<&Path>) -> Result<
             line,
             &mut report,
             &mut states,
-            &mut score_sum,
+            &mut tracking_bytes,
         );
-    }
-    if report.counts.scored > 0 {
-        report.mean = Some(score_sum / report.counts.scored as f64);
     }
     if let Some(summary_path) = summary {
         reconcile_summary(summary_path, mapping, &mut report)?;
@@ -152,15 +152,15 @@ fn inspect_record(
     mapping: &Mapping,
     line: u64,
     report: &mut Report,
-    states: &mut HashMap<String, String>,
-    score_sum: &mut f64,
+    states: &mut HashMap<String, Option<u8>>,
+    tracking_bytes: &mut usize,
 ) {
     let id = lookup(value, &mapping.sample_id)
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty() && s.len() <= MAX_IDENTIFIER_BYTES);
     let status = lookup(value, &mapping.status)
         .and_then(Value::as_str)
-        .filter(|s| !s.is_empty());
+        .filter(|s| !s.is_empty() && s.len() <= MAX_STATUS_BYTES);
     if id.is_none() || status.is_none() {
         finding(
             report,
@@ -179,7 +179,8 @@ fn inspect_record(
             "failed" | "errored" => report.counts.errored = report.counts.errored.saturating_add(1),
             _ => {}
         }
-        if let Some(previous) = states.get_mut(id) {
+        let current_terminal = terminal_category(&normalized);
+        if let Some(previous_terminal) = states.get_mut(id) {
             finding(
                 report,
                 "ERG003",
@@ -188,7 +189,7 @@ fn inspect_record(
                 "Sample identifier is duplicated",
             );
             if let (Some(previous_category), Some(current_category)) =
-                (terminal_category(previous), terminal_category(&normalized))
+                (*previous_terminal, current_terminal)
             {
                 if previous_category != current_category {
                     finding(
@@ -200,17 +201,17 @@ fn inspect_record(
                     );
                 }
             }
-            *previous = normalized;
-        } else if states.len() < MAX_TRACKED_SAMPLES {
-            states.insert(id.to_owned(), normalized);
-        } else if !report.findings.iter().any(|item| item.code == "ERG007") {
-            finding(
-                report,
-                "ERG007",
-                Severity::Warning,
-                Some(line),
-                "Duplicate tracking capacity was reached; later identities are not compared",
-            );
+            if current_terminal.is_some() {
+                *previous_terminal = current_terminal;
+            }
+        } else {
+            let entry_bytes = id.len().saturating_add(TRACKING_ENTRY_OVERHEAD);
+            if tracking_bytes.saturating_add(entry_bytes) <= MAX_TRACKING_BYTES {
+                states.insert(id.to_owned(), current_terminal);
+                *tracking_bytes = tracking_bytes.saturating_add(entry_bytes);
+            } else {
+                saturation_finding(report, Some(line));
+            }
         }
     }
     match lookup(value, &mapping.score) {
@@ -222,7 +223,11 @@ fn inspect_record(
                     && mapping.score_max.is_none_or(|max| score <= max) =>
             {
                 report.counts.scored = report.counts.scored.saturating_add(1);
-                *score_sum += score;
+                let count = report.counts.scored as f64;
+                report.mean = Some(match report.mean {
+                    None => score,
+                    Some(mean) => mean + (score / count - mean / count),
+                });
             }
             _ => finding(
                 report,
@@ -382,11 +387,30 @@ fn finding(
     line: Option<u64>,
     message: &'static str,
 ) {
+    if report.findings.len() >= MAX_FINDINGS.saturating_sub(1) {
+        saturation_finding(report, line);
+        return;
+    }
     report.findings.push(Finding {
         code,
         severity,
         line,
         message,
+    });
+}
+
+fn saturation_finding(report: &mut Report, line: Option<u64>) {
+    if report.findings.iter().any(|item| item.code == "ERG007") {
+        return;
+    }
+    if report.findings.len() >= MAX_FINDINGS {
+        report.findings.truncate(MAX_FINDINGS - 1);
+    }
+    report.findings.push(Finding {
+        code: "ERG007",
+        severity: Severity::Warning,
+        line,
+        message: "Audit capacity was reached; additional findings or identities are omitted",
     });
 }
 

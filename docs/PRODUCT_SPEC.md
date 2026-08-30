@@ -41,14 +41,14 @@ Exit status is `0` when no findings exist, `1` when findings exist, and `2` for 
 - `ERG004`: conflicting terminal statuses for one sample identifier.
 - `ERG005`: non-finite or out-of-range score.
 - `ERG006`: declared summary count or arithmetic mean disagrees with recomputed data.
-- `ERG007`: duplicate-tracking capacity was reached, so later identities cannot be compared.
+- `ERG007`: an audit capacity was reached, so additional findings or identities are omitted.
 
 Terminal statuses are `completed`, `succeeded`, `failed`, `errored`, and `cancelled` (case-insensitive). Completed means `completed` or `succeeded`; errored means `failed` or `errored`. The arithmetic mean uses finite declared scores only. Duplicate records remain part of input counts but are findings, rather than being silently discarded.
 
 ## Privacy and Resource Boundaries
 
-- Read only explicitly named local regular files; reject symlink inputs.
-- Stream JSONL with a 16 MiB per-record limit and continue after draining an oversized record. Limit mapping and summary files to 1 MiB, identifiers to 4 KiB, and duplicate tracking to 250,000 samples.
+- Read only explicitly named local regular files. Symlink rejection is best-effort input validation, not a defense against a hostile concurrently modified filesystem; callers must provide stable local files.
+- Stream JSONL with a 16 MiB per-record limit and continue after draining an oversized record. Limit mapping and summary files to 1 MiB, identifiers to 1 KiB, statuses to 128 bytes, duplicate-tracking storage to 16 MiB, and findings to 10,000.
 - Never emit sample content, field values, absolute paths, environment variables, or credentials.
 - Reports identify only a sanitized input basename, line number, finding code, and fixed explanatory text.
 - Make no network requests and never mutate or repair the audited inputs.
